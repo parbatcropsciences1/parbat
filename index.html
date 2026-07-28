@@ -3842,8 +3842,24 @@ function renderKmLog(){
     </tr>`;
   }).join('');
   document.getElementById('kmTable').innerHTML = `
-    <thead><tr><th>Date</th><th>Zone</th><th>Area</th><th>Desig.</th><th>Name</th><th>Start→End KM</th><th>Distance</th><th>Monthly KM</th><th>Visit Place</th><th>Usage Type</th><th>Remarks</th><th>Vehicle Number</th></tr></thead>
+    <thead><tr><th>Date</th><th>Zone</th><th>Area</th><th>Desig.</th><th>Name</th><th>Opening → Reading</th><th>KM Used</th><th>Monthly KM</th><th>Visit Place</th><th>Usage Type</th><th>Remarks</th><th>Vehicle Number</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="12" style="padding:22px;text-align:center;color:var(--mut)">No KM entries yet. <b style="color:var(--g600);cursor:pointer" onclick="openKmLog(null)">Add one →</b></td></tr>`}</tbody>`;
+}
+function kmVehicleDetailHtml(v){
+  if(!v) return '<div class="hint">Select an employee to auto-fill their assigned vehicle.</div>';
+  const title = [v.carName,v.model].filter(Boolean).join(' ') || 'Vehicle';
+  return `<div style="border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px">
+    <b>${esc(title)}</b> — ${esc(v.regNo||'No reg. no.')}
+    ${v.chassisNo?'<br>Chassis: '+esc(v.chassisNo):''}${v.engineNo?' · Engine: '+esc(v.engineNo):''}
+  </div>`;
+}
+/** The odometer reading immediately before a given date for a vehicle — NOT just "the latest
+ * reading overall". Needed so editing a past entry computes the correct opening balance for
+ * that day, rather than whatever the vehicle's odometer happens to read today. */
+function vehicleOdometerBefore(vehId, beforeDate, excludeLogId){
+  const logs = kmLogs.filter(k=>k.vehicleId===vehId && k.id!==excludeLogId && (k.date||'') < beforeDate && k.endKm!=null)
+    .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  return logs.length ? (+logs[logs.length-1].endKm || 0) : null;
 }
 function openKmLog(id){
   if(!can('edit')){ toast("You don't have access to edit"); return; }
@@ -3852,22 +3868,19 @@ function openKmLog(id){
   const g = (key,dv='') => k ? (k[key]!==undefined?k[key]:dv) : dv;
   document.getElementById('kmTitle').textContent = k ? '📏 KM Entry — '+esc(g('empName')) : '📏 Add KM Entry';
   document.getElementById('kmDelete').style.display = k && can('remove') ? '' : 'none';
-  const empOptions = employees.filter(e=>e.status==='Active').sort((a,b)=>a.name.localeCompare(b.name))
-    .map(e=>`<option value="${e.id}" ${g('empId')===e.id?'selected':''}>${esc(e.name)}</option>`).join('');
-  const vehOptions = vehicles.map(v=>`<option value="${v.id}" ${g('vehicleId')===v.id?'selected':''}>${esc([v.carName,v.model].filter(Boolean).join(' ')||v.model)} — ${esc(v.regNo||'')}</option>`).join('');
   const usageVal = g('usageType','Official Use');
   document.getElementById('kmForm').innerHTML = `
     <div class="form-grid">
-      <div class="fld"><label>Date *</label><input type="date" id="km_date" value="${g('date', TODAY())}"></div>
-      <div class="fld"><label>Zone</label><input id="km_zone" value="${esc(g('zone'))}" placeholder="KWL"></div>
-      <div class="fld"><label>Area / Territory</label><input id="km_area" value="${esc(g('area'))}" placeholder="Khanewal"></div>
-      <div class="fld"><label>Designation</label><select id="km_desig">${['','FO','SFO','TSO','ASM','SAM','ZSM','RSM','Other'].map(d=>`<option ${g('designation')===d?'selected':''}>${d}</option>`).join('')}</select></div>
-      <div class="fld full"><label>Employee</label><select id="km_emp" onchange="kmEmpChanged()">${'<option value="">— Select —</option>'+empOptions}</select></div>
-      <div class="fld full"><label>Vehicle</label><select id="km_veh" onchange="kmVehChanged()">${'<option value="">— Select —</option>'+vehOptions}</select></div>
-      <div class="fld"><label>Vehicle Number</label><input id="km_vehNo" value="${esc(g('vehicleNo'))}" placeholder="LEA-1234"></div>
-      <div class="fld"><label>Start KM *</label><input type="number" min="0" id="km_start" value="${+g('startKm')||0}" onchange="kmComputeDistance()"></div>
-      <div class="fld"><label>End KM *</label><input type="number" min="0" id="km_end" value="${+g('endKm')||0}" onchange="kmComputeDistance()"></div>
-      <div class="fld"><label>Distance (auto)</label><input id="km_dist" value="${(+g('dailyKm')||0).toLocaleString('en-PK')} km" disabled></div>
+      <div class="fld"><label>Date *</label><input type="date" id="km_date" value="${g('date', TODAY())}" onchange="kmRefreshOpening()"></div>
+      <div class="fld"><label>Zone *</label><select id="km_zone" onchange="kmZoneChanged()"><option value="">— Select Zone —</option></select></div>
+      <div class="fld"><label>Territory *</label><select id="km_area" onchange="kmTerritoryChanged()"><option value="">— Select Zone First —</option></select></div>
+      <div class="fld"><label>Designation</label><input id="km_desig" disabled value="${esc(g('designation'))}"></div>
+      <div class="fld full"><label>Employee *</label><select id="km_emp" onchange="kmEmpChanged()"><option value="">— Select Territory First —</option></select></div>
+      <div class="fld full"><label>Vehicle</label><select id="km_veh" onchange="kmVehChanged()"><option value="">— Select Employee First —</option></select></div>
+      <div class="fld full"><label>Vehicle Details</label><div id="km_vehDetail">${kmVehicleDetailHtml(null)}</div></div>
+      <div class="fld"><label>Opening Balance (KM)</label><input type="number" min="0" id="km_opening" value="${+g('startKm')||0}" oninput="kmComputeDistance()"></div>
+      <div class="fld"><label>Odometer Reading — Today *</label><input type="number" min="0" id="km_end" value="${+g('endKm')||''}" oninput="kmComputeDistance()"></div>
+      <div class="fld"><label>KM Used Today (auto)</label><input id="km_dist" value="${(+g('dailyKm')||0).toLocaleString('en-PK')} km" disabled></div>
       <div class="fld full"><label>Visit Place</label><input id="km_visit" value="${esc(g('visitPlace'))}" placeholder="Dealer / field visit location"></div>
       <div class="fld"><label>Usage Type *</label><select id="km_usage" onchange="kmUsageChanged()">
         <option ${usageVal==='Official Use'?'selected':''}>Official Use</option>
@@ -3875,11 +3888,78 @@ function openKmLog(id){
       </select></div>
       <div class="fld full"><label id="km_remarksLabel">Remarks${usageVal==='Personal Use'?' *':''}</label><textarea id="km_remarks" rows="2" placeholder="${usageVal==='Personal Use'?'Required for personal use — explain the trip':'Optional notes'}">${esc(g('remarks'))}</textarea></div>
     </div>`;
+  // populate Zone options, then cascade down to whatever this entry already has (edit mode)
+  // or leave everything else empty waiting for a selection (add mode)
+  const zones = [...new Set(employees.filter(e=>e.status==='Active').map(e=>e.zone).filter(Boolean))].sort();
+  document.getElementById('km_zone').innerHTML = '<option value="">— Select Zone —</option>' + zones.map(z=>`<option ${g('zone')===z?'selected':''}>${esc(z)}</option>`).join('');
+  if(g('zone')){ kmZoneChanged(true); document.getElementById('km_area').value = g('area'); kmTerritoryChanged(true); document.getElementById('km_emp').value = g('empId'); kmEmpChanged(true); document.getElementById('km_veh').value = g('vehicleId'); kmVehChanged(); document.getElementById('km_opening').value = +g('startKm')||0; }
   document.getElementById('kmModal').classList.add('open');
   document.body.style.overflow='hidden';
 }
+function kmZoneChanged(skipReset){
+  const zone = document.getElementById('km_zone').value;
+  const territories = [...new Set(employees.filter(e=>e.status==='Active' && (!zone||e.zone===zone)).map(e=>e.territory).filter(Boolean))].sort();
+  const sel = document.getElementById('km_area');
+  sel.innerHTML = '<option value="">— Select Territory —</option>' + territories.map(t=>`<option>${esc(t)}</option>`).join('');
+  if(!skipReset) kmTerritoryChanged();
+}
+function kmTerritoryChanged(skipAutoSelect){
+  const zone = document.getElementById('km_zone').value;
+  const terr = document.getElementById('km_area').value;
+  const KM_ELIGIBLE_DESIGS = ['ASM','SAM','ZSM','RSM']; // representatives only — FO/SFO don't get vehicles logged this way
+  const emps = employees.filter(e=>e.status==='Active' && KM_ELIGIBLE_DESIGS.includes(e.designation) && (!zone||e.zone===zone) && (!terr||e.territory===terr)).sort((a,b)=>a.name.localeCompare(b.name));
+  const sel = document.getElementById('km_emp');
+  sel.innerHTML = '<option value="">— Select Employee —</option>' + emps.map(e=>`<option value="${e.id}">${esc(e.name)} — ${esc(e.designation||'')}</option>`).join('');
+  if(!skipAutoSelect && terr && emps.length===1){ sel.value = emps[0].id; kmEmpChanged(); } // territory has exactly one eligible person — auto-select them
+  else if(!skipAutoSelect) kmEmpChanged();
+}
+function kmEmpChanged(skipVehCascade){
+  const empId = document.getElementById('km_emp').value;
+  const e = employees.find(x=>x.id===empId);
+  document.getElementById('km_desig').value = e ? (e.designation||'') : '';
+  const vehSel = document.getElementById('km_veh');
+  if(!e){ vehSel.innerHTML = '<option value="">— Select Employee First —</option>'; document.getElementById('km_vehDetail').innerHTML = kmVehicleDetailHtml(null); return; }
+  // A vehicle is often assigned in the data to the field rep (FO/SFO) actually driving it,
+  // while the KM log itself gets recorded under the ASM/ZSM representative for that
+  // territory. Matching only "assigned to this exact selected person" would miss that
+  // vehicle entirely once FO/SFO are excluded from selection — so vehicles registered to
+  // the same zone+territory count too, not just ones directly assigned to this person.
+  const zone = document.getElementById('km_zone').value, terr = document.getElementById('km_area').value;
+  const assignedToThisPerson = vehicles.filter(v=>v.assignedTo===empId);
+  const inThisTerritory = vehicles.filter(v=>v.assignedTo!==empId && zone && terr && v.zone===zone && v.territory===terr);
+  const primary = [...assignedToThisPerson, ...inThisTerritory];
+  const others = vehicles.filter(v=>!primary.includes(v));
+  const optHtml = list => list.map(v=>`<option value="${v.id}">${esc([v.carName,v.model].filter(Boolean).join(' ')||v.model)} — ${esc(v.regNo||'')}${v.assignedTo && v.assignedTo!==empId ? ' ('+esc(vehEmpName(v.assignedTo)||'unassigned')+')' : ''}</option>`).join('');
+  vehSel.innerHTML = '<option value="">— Select Vehicle —</option>' + optHtml(primary) + (others.length?'<optgroup label="Other vehicles">'+optHtml(others)+'</optgroup>':'');
+  if(primary.length===1 && !skipVehCascade){ vehSel.value = primary[0].id; kmVehChanged(); } // exactly one relevant vehicle — auto-select it
+  else if(!skipVehCascade){ document.getElementById('km_vehDetail').innerHTML = kmVehicleDetailHtml(null); kmRefreshOpening(); }
+}
+function kmVehChanged(){
+  const vehId = document.getElementById('km_veh').value;
+  const v = vehById(vehId);
+  document.getElementById('km_vehDetail').innerHTML = kmVehicleDetailHtml(v);
+  kmRefreshOpening();
+}
+function kmRefreshOpening(){
+  const vehId = document.getElementById('km_veh').value;
+  const date = document.getElementById('km_date').value || TODAY();
+  const openEl = document.getElementById('km_opening');
+  if(!vehId){ openEl.value = 0; openEl.disabled = false; kmComputeDistance(); return; }
+  const prior = vehicleOdometerBefore(vehId, date, editingKmId);
+  if(prior!==null){
+    // a real prior reading exists — today's opening balance IS yesterday's closing reading.
+    // Locked, not manually editable: this is exactly the "close of day = next day's start" chain.
+    openEl.value = prior; openEl.disabled = true;
+    openEl.title = "Auto-filled from this vehicle's last recorded reading";
+  } else {
+    // first-ever entry for this vehicle — no prior reading to chain from, so this establishes the baseline
+    openEl.disabled = false;
+    openEl.title = 'No prior reading for this vehicle yet — enter its current odometer as the starting baseline';
+  }
+  kmComputeDistance();
+}
 function kmComputeDistance(){
-  const s = +((document.getElementById('km_start')||{}).value)||0;
+  const s = +((document.getElementById('km_opening')||{}).value)||0;
   const e = +((document.getElementById('km_end')||{}).value)||0;
   const distEl = document.getElementById('km_dist');
   if(distEl) distEl.value = (Math.max(0,e-s)).toLocaleString('en-PK') + ' km';
@@ -3891,40 +3971,26 @@ function kmUsageChanged(){
   if(lbl) lbl.textContent = 'Remarks' + (isPersonal ? ' *' : '');
   if(ta) ta.placeholder = isPersonal ? 'Required for personal use — explain the trip' : 'Optional notes';
 }
-function kmEmpChanged(){
-  const empId = document.getElementById('km_emp').value;
-  const e = employees.find(x=>x.id===empId); if(!e) return;
-  document.getElementById('km_zone').value = e.zone||'';
-  document.getElementById('km_area').value = e.territory||'';
-  document.getElementById('km_desig').value = e.designation||'';
-  const v = vehicles.find(v=>v.assignedTo===empId);
-  if(v){ document.getElementById('km_veh').value = v.id; document.getElementById('km_vehNo').value = v.regNo||''; kmVehChanged(); }
-}
-function kmVehChanged(){
-  const vehId = document.getElementById('km_veh').value;
-  const v = vehById(vehId); if(!v) return;
-  document.getElementById('km_vehNo').value = v.regNo||'';
-  const odo = vehicleOdometer(vehId);
-  if(odo!==null){ document.getElementById('km_start').value = odo; kmComputeDistance(); }
-}
 function saveKmLog(){
   if(!can('edit')){ toast("You don't have access"); return; }
   const g = k => (document.getElementById('km_'+k)||{}).value || '';
   const date = g('date'); if(!date){ toast('Date is required'); return; }
   const empId = g('emp'); const e = employees.find(x=>x.id===empId);
+  if(!e){ toast('Please select an employee'); return; }
   const vehId = g('veh'); const v = vehicles.find(x=>x.id===vehId);
-  const startKm = +g('start')||0, endKm = +g('end')||0;
-  if(endKm<startKm){ toast('End KM cannot be less than Start KM'); return; }
+  if(!vehId){ toast('Please select a vehicle'); return; }
+  const startKm = +g('opening')||0, endKm = +g('end')||0;
+  if(!g('end')){ toast("Enter today's odometer reading"); return; }
+  if(endKm<startKm){ toast("Today's odometer reading cannot be less than the opening balance ("+startKm.toLocaleString('en-PK')+" km)"); return; }
   const usageType = g('usage') || 'Official Use';
   const remarks = g('remarks').trim();
   if(usageType==='Personal Use' && !remarks){ toast('Remarks are required for Personal Use entries'); return; }
   const obj = {
     date, zone:g('zone'), area:g('area'), designation:g('desig'),
-    empId, empName: e ? e.name : '', vehicleId: vehId, vehicleNo: g('vehNo') || (v?v.regNo:''),
+    empId, empName: e.name, vehicleId: vehId, vehicleNo: v.regNo||'',
     startKm, endKm, dailyKm: Math.max(0,endKm-startKm), visitPlace: g('visit'),
     usageType, remarks, personal: usageType==='Personal Use'
   };
-  if(!obj.empName){ toast('Please select an employee'); return; }
   if(editingKmId) Object.assign(kmLogs.find(x=>x.id===editingKmId), obj);
   else kmLogs.push(Object.assign({id:uid('km_')}, obj));
   kmLogsStore(); logActivity('📏', (editingKmId?'Updated KM entry for ':'Added KM entry for ')+obj.empName);
