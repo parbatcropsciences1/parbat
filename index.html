@@ -1177,7 +1177,16 @@ body{margin-left:206px}
       </div>
       <button class="btn btn-g" onclick="openVehicle(null)">＋ Add Vehicle</button>
     </div>
-    <div class="dl-wrap"><table class="dl-table" id="vhTable"></table></div>
+    <div class="filters" style="margin-bottom:12px">
+      <input id="vhSearch" placeholder="🔍 Search car name, model, reg no…" oninput="renderVehicles()" style="min-width:210px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit">
+      <select id="vhFilterName" onchange="renderVehicles()"><option value="">All Car Names</option></select>
+      <select id="vhFilterModel" onchange="renderVehicles()"><option value="">All Car Models</option></select>
+      <select id="vhFilterRegion" onchange="renderVehicles()"><option value="">All Regions</option></select>
+      <select id="vhFilterStatus" onchange="renderVehicles()"><option value="">All Status</option><option>Active</option><option>Maintenance</option><option>Retired</option></select>
+      <button class="chip-clear" onclick="clearVehicleFilters()">✕ Clear</button>
+      <span class="count-lab" id="vhCount"></span>
+    </div>
+    <main class="grid" id="vhCardGrid"></main>
   </div>
 
   <div id="vhTabKm" style="display:none">
@@ -2320,7 +2329,7 @@ function openEdit(id){
       </div></div>`
   + `<div class="fld full"><label>Dealer List — one per line: Name | Joining Date | FO</label><textarea id="f_dealerList" rows="5" placeholder="Al-Madina Traders | 2021-04-01 | Ahmed Raza">${esc((e.dealerList||[]).map(d=> typeof d==='string' ? d : [d.name,d.doj,d.fo].filter(Boolean).join(' | ')).join('\n'))}</textarea></div>`
   + `<div class="fld full"><label>Assigned Vehicle(s)</label>
-      <select id="f_vehicleAssign" multiple size="4">${vehicles.map(v=>`<option value="${v.id}" ${v.assignedTo===id?'selected':''}>${esc(v.model||'Vehicle')} — ${esc(v.regNo||'')}</option>`).join('')}</select>
+      <select id="f_vehicleAssign" multiple size="4">${vehicles.map(v=>`<option value="${v.id}" ${v.assignedTo===id?'selected':''}>${esc([v.carName,v.model].filter(Boolean).join(' ')||'Vehicle')} — ${esc(v.regNo||'')}</option>`).join('')}</select>
       <div class="hint">Ctrl/Cmd-click to select more than one. Assigning here links automatically to the Vehicles module — no separate step needed.</div></div>`;
   // buffer holding all six months while editing
   { const ms=document.getElementById('f_manager'); if(ms) ms.dataset.initial = e.manager||''; }
@@ -3574,17 +3583,65 @@ function vehiclesLoad(){
 }
 const vehById = id => vehicles.find(v=>v.id===id);
 function vehEmpName(id){ const e=employees.find(x=>x.id===id); return e ? e.name : ''; }
+function clearVehicleFilters(){
+  ['vhSearch'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  ['vhFilterName','vhFilterModel','vhFilterRegion','vhFilterStatus'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  renderVehicles();
+}
 function renderVehicles(){
-  const rows = vehicles.map(v=>`
-    <tr onclick="openVehicle('${v.id}')">
-      <td><div class="dl-firm">${esc(v.model||'—')}</div><div class="dl-own">${esc(v.regNo||'')}${v.chassisNo?' · Chassis: '+esc(v.chassisNo):''}${v.engineNo?' · Engine: '+esc(v.engineNo):''}</div></td>
-      <td>${v.assignedTo ? esc(vehEmpName(v.assignedTo)||'—') : '<span style="color:var(--mut)">Unassigned</span>'}${v.assignedTo&&v.assignedYear?`<div class="dl-own">Since ${v.assignedYear}</div>`:''}</td>
-      <td><span class="repchip">${esc(v.zone||'—')}</span>${v.territory?`<div class="dl-own">${esc(v.territory)}</div>`:''}</td>
-      <td><span class="st ${v.status==='Active'?'Active':'Dormant'}">${esc(v.status||'Active')}</span></td>
-    </tr>`).join('');
-  document.getElementById('vhTable').innerHTML = `
-    <thead><tr><th>Vehicle</th><th>Assigned To</th><th>Region / Territory</th><th>Status</th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="4" style="padding:22px;text-align:center;color:var(--mut)">No vehicles yet. <b style="color:var(--g600);cursor:pointer" onclick="openVehicle(null)">Add one →</b></td></tr>`}</tbody>`;
+  // populate filter dropdown options from whatever's actually in the data
+  const fillOpts = (id, vals) => {
+    const sel = document.getElementById(id); if(!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = sel.options[0].outerHTML + [...new Set(vals)].filter(Boolean).sort().map(v=>`<option>${esc(v)}</option>`).join('');
+    if([...sel.options].some(o=>o.value===cur)) sel.value = cur;
+  };
+  fillOpts('vhFilterName', vehicles.map(v=>v.carName));
+  fillOpts('vhFilterModel', vehicles.map(v=>v.model));
+  fillOpts('vhFilterRegion', vehicles.map(v=>v.zone));
+
+  const q = (document.getElementById('vhSearch')?.value||'').trim().toLowerCase();
+  const fName = document.getElementById('vhFilterName')?.value||'';
+  const fModel = document.getElementById('vhFilterModel')?.value||'';
+  const fRegion = document.getElementById('vhFilterRegion')?.value||'';
+  const fStatus = document.getElementById('vhFilterStatus')?.value||'';
+
+  const filtered = vehicles.filter(v=>{
+    if(fName && v.carName!==fName) return false;
+    if(fModel && v.model!==fModel) return false;
+    if(fRegion && v.zone!==fRegion) return false;
+    if(fStatus && v.status!==fStatus) return false;
+    if(q){
+      const hay = [v.carName,v.model,v.regNo,v.chassisNo,v.engineNo].filter(Boolean).join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const countEl = document.getElementById('vhCount');
+  if(countEl) countEl.innerHTML = `Showing <b>${filtered.length}</b> of ${vehicles.length} vehicles`;
+
+  const g = document.getElementById('vhCardGrid');
+  if(!filtered.length){
+    g.innerHTML = vehicles.length
+      ? `<div class="empty"><div class="disp">No vehicles match these filters</div>Try clearing a filter or the search box.</div>`
+      : `<div class="empty"><div class="disp">No vehicles yet</div><b style="color:var(--g600);cursor:pointer" onclick="openVehicle(null)">Add one →</b></div>`;
+    return;
+  }
+  g.innerHTML = filtered.map(v=>{
+    const title = [v.carName,v.model].filter(Boolean).join(' ') || 'Vehicle';
+    const odo = vehicleOdometer(v.id);
+    return `<article class="card" onclick="openVehicle('${v.id}')" tabindex="0" onkeydown="if(event.key==='Enter')openVehicle('${v.id}')">
+      <div class="band"><span class="status-dot ${v.status==='Active'?'st-active':'st-inactive'}">${esc(v.status||'Active')}</span></div>
+      <div class="body">
+        <h3>🚗 ${esc(title)}</h3>
+        <div class="eid mono">${esc(v.regNo||'No reg. no.')}</div>
+        <div class="badges">${v.zone?`<span class="badge b-terr">${esc(v.zone)}${v.territory?' · '+esc(v.territory):''}</span>`:''}</div>
+        <div class="mgr">${v.assignedTo ? '👤 '+esc(vehEmpName(v.assignedTo)||'—') : '<span style="color:var(--mut)">Unassigned</span>'}${v.assignedTo&&(v.assignedDate||v.assignedYear)?` · since ${esc(v.assignedDate||v.assignedYear)}`:''}</div>
+        <div class="hint" style="margin-top:8px">${v.chassisNo?'Chassis: '+esc(v.chassisNo)+'<br>':''}${v.engineNo?'Engine: '+esc(v.engineNo)+'<br>':''}Odometer: ${odo!==null?odo.toLocaleString('en-PK')+' km':'—'}</div>
+      </div>
+    </article>`;
+  }).join('');
 }
 function vehiclesForEmployee(empId){ return vehicles.filter(v=>v.assignedTo===empId); }
 function empVehicleKmStats(empId){
@@ -3619,7 +3676,7 @@ function vehicleProfileCard(e){
       ${kpi('🔧 Vehicle Status', statusSummary, activeCount<list.length?'k-amber':'')}
     </div>
     ${list.map(v=>`<div class="info-grid" style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="setView('vehicles');setTimeout(()=>openVehicle('${v.id}'),0)">
-      ${vInfo('Vehicle Name / Model', v.model)}${vInfo('Registration No.', v.regNo)}
+      ${vInfo('Car Name', v.carName)}${vInfo('Car Model', v.model)}${vInfo('Registration No.', v.regNo)}
       ${vInfo('Assigned Date', v.assignedDate||v.assignedYear)}${vInfo('Current Odometer (KM)', vehicleOdometer(v.id)!==null ? vehicleOdometer(v.id).toLocaleString('en-PK')+' km' : 'No KM log yet')}
       ${vInfo('Status', v.status)}
     </div>`).join('')}
@@ -3630,13 +3687,14 @@ function openVehicle(id){
   editingVehicleId = id;
   const v = id ? vehById(id) : null;
   const g = (k,dv='') => v ? (v[k]!==undefined?v[k]:dv) : dv;
-  document.getElementById('vhTitle').textContent = v ? '🚗 '+(v.model||'Vehicle') : '🚗 Add Vehicle';
+  document.getElementById('vhTitle').textContent = v ? '🚗 '+([v.carName,v.model].filter(Boolean).join(' ')||'Vehicle') : '🚗 Add Vehicle';
   document.getElementById('vhDelete').style.display = v && can('remove') ? '' : 'none';
   const empOptions = employees.filter(e=>e.status==='Active').sort((a,b)=>a.name.localeCompare(b.name))
     .map(e=>`<option value="${e.id}" ${g('assignedTo')===e.id?'selected':''}>${esc(e.name)} — ${esc(e.designation||'')}</option>`).join('');
   document.getElementById('vehicleForm').innerHTML = `
     <div class="form-grid">
-      <div class="fld"><label>Model *</label><input id="vh_model" value="${esc(g('model'))}" placeholder="Suzuki Bolan"></div>
+      <div class="fld"><label>Car Name *</label><input id="vh_carName" value="${esc(g('carName'))}" placeholder="Suzuki"></div>
+      <div class="fld"><label>Car Model *</label><input id="vh_model" value="${esc(g('model'))}" placeholder="Cultus 2020"></div>
       <div class="fld"><label>Registration No.</label><input id="vh_reg" value="${esc(g('regNo'))}" placeholder="LEA-1234"></div>
       <div class="fld"><label>Chassis Number</label><input id="vh_chassis" value="${esc(g('chassisNo'))}" placeholder="e.g. MA3ERLF1S00123456"></div>
       <div class="fld"><label>Engine Number</label><input id="vh_engine" value="${esc(g('engineNo'))}" placeholder="e.g. F8B1234567"></div>
@@ -3655,19 +3713,20 @@ function openVehicle(id){
 function saveVehicle(){
   if(!can('edit')){ toast("You don't have access"); return; }
   const g = k => (document.getElementById('vh_'+k)||{}).value || '';
-  const model = g('model').trim(); if(!model){ toast('Vehicle model is required'); return; }
-  const obj = { model, regNo:g('reg'), chassisNo:g('chassis'), engineNo:g('engine'),
+  const carName = g('carName').trim();
+  const model = g('model').trim(); if(!model){ toast('Car model is required'); return; }
+  const obj = { carName, model, regNo:g('reg'), chassisNo:g('chassis'), engineNo:g('engine'),
     assignedTo:g('emp')||null, assignedDate:g('assignDate')||TODAY(), assignedYear: g('assignDate') ? new Date(g('assignDate')).getFullYear() : new Date(TODAY()).getFullYear(),
     zone:g('zone'), territory:g('territory'), status:g('status')||'Active', notes:g('notes') };
   if(editingVehicleId) Object.assign(vehById(editingVehicleId), obj);
   else vehicles.push(Object.assign({id:uid('vh_')}, obj));
-  vehiclesStore(); logActivity('🚗', (editingVehicleId?'Updated vehicle ':'Added vehicle ')+model);
+  vehiclesStore(); logActivity('🚗', (editingVehicleId?'Updated vehicle ':'Added vehicle ')+([carName,model].filter(Boolean).join(' ')));
   closeModal('vehicleModal'); renderVehicles(); toast('Vehicle saved');
 }
 function deleteVehicle(){
   if(!can('remove')){ toast("You don't have access to delete"); return; }
   const v = vehById(editingVehicleId); if(!v) return;
-  if(!confirm('Delete "'+(v.model||'this vehicle')+'"?')) return;
+  if(!confirm('Delete "'+([v.carName,v.model].filter(Boolean).join(' ')||'this vehicle')+'"?')) return;
   vehicles = vehicles.filter(x=>x.id!==editingVehicleId);
   vehiclesStore(); closeModal('vehicleModal'); renderVehicles(); toast('Vehicle deleted');
 }
@@ -3759,7 +3818,7 @@ function openKmLog(id){
   document.getElementById('kmDelete').style.display = k && can('remove') ? '' : 'none';
   const empOptions = employees.filter(e=>e.status==='Active').sort((a,b)=>a.name.localeCompare(b.name))
     .map(e=>`<option value="${e.id}" ${g('empId')===e.id?'selected':''}>${esc(e.name)}</option>`).join('');
-  const vehOptions = vehicles.map(v=>`<option value="${v.id}" ${g('vehicleId')===v.id?'selected':''}>${esc(v.model)} — ${esc(v.regNo||'')}</option>`).join('');
+  const vehOptions = vehicles.map(v=>`<option value="${v.id}" ${g('vehicleId')===v.id?'selected':''}>${esc([v.carName,v.model].filter(Boolean).join(' ')||v.model)} — ${esc(v.regNo||'')}</option>`).join('');
   const usageVal = g('usageType','Official Use');
   document.getElementById('kmForm').innerHTML = `
     <div class="form-grid">
