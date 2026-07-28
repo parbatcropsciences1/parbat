@@ -525,6 +525,7 @@ body{margin-left:206px}
 <!-- ================= SIDEBAR ================= -->
 <nav class="sidebar" id="mainSidebar">
   <div class="sb-brand"><span class="leaf">🌿</span><span>Parbat</span></div>
+  <button id="vsDashboard" class="sb-link" onclick="setView('dashboard')">📊 Dashboard</button>
   <button id="vsTeam" class="sb-link active" onclick="setView('team')">👥 Team</button>
   <button id="vsDealers" class="sb-link" onclick="setView('dealers')">🏪 Dealers<span id="promiseBadge" style="display:none;background:#C24A2E;color:#fff;font-size:10px;font-weight:800;border-radius:10px;padding:1px 6px;margin-left:auto"></span></button>
   <button id="vsProducts" class="sb-link" onclick="setView('products')">🧴 Products</button>
@@ -638,6 +639,39 @@ body{margin-left:206px}
 </div>
 
 <!-- ================= SUMMARY ================= -->
+<!-- ================= DASHBOARD OVERVIEW ================= -->
+<section id="dashboardOverviewView" style="display:none;padding:22px">
+  <div class="card-p" style="margin-bottom:16px">
+    <div class="cc-title">👥 Team Totals</div>
+    <div class="kpis" id="dashTeamKpis"></div>
+  </div>
+
+  <div class="card-p" style="margin-bottom:16px">
+    <div class="cc-title">🚗 Vehicle Totals</div>
+    <div class="kpis" id="dashVehKpis" style="margin-bottom:14px"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">
+      <div><div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Car Model</div><div id="dashVehByModel"></div></div>
+      <div><div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Car Name</div><div id="dashVehByName"></div></div>
+      <div><div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Year</div><div id="dashVehByYear"></div></div>
+    </div>
+  </div>
+
+  <div class="card-p" style="margin-bottom:16px">
+    <div class="cc-title">🏪 Dealer Totals</div>
+    <div class="kpis" id="dashDealerKpis" style="margin-bottom:14px"></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">
+      <div><div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Status</div><div id="dashDealerByStatus"></div></div>
+      <div><div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Category</div><div id="dashDealerByCat"></div></div>
+    </div>
+  </div>
+
+  <div class="card-p">
+    <div class="cc-title">🤝 Payment Promise Totals</div>
+    <div class="kpis" id="dashPromiseKpis" style="margin-bottom:14px"></div>
+    <div id="dashPromiseByStatus"></div>
+  </div>
+</section>
+
 <section class="summary" id="summaryStrip" aria-label="Team summary"></section>
 
 <!-- ============== COMMAND CENTER (Tier 1) ============== -->
@@ -2853,6 +2887,7 @@ function setView(v){
   document.getElementById('vehiclesView').style.display = (v==='vehicles') ? '' : 'none';
   document.getElementById('execView').style.display = (v==='exec') ? '' : 'none';
   document.getElementById('dealerAIView').style.display = (v==='dealerai') ? '' : 'none';
+  document.getElementById('dashboardOverviewView').style.display = (v==='dashboard') ? '' : 'none';
   const ad=document.getElementById('btnAddDealer');
   if(ad) ad.style.display = (v==='dealers' && can('edit')) ? '' : 'none';
   ['btnImport','btnDailySales','btnTemplate','btnFixDates','btnAdd'].forEach(id=>{
@@ -2865,6 +2900,7 @@ function setView(v){
   const vv=document.getElementById('vsVehicles'); if(vv) vv.classList.toggle('active', v==='vehicles');
   const ve=document.getElementById('vsExec'); if(ve) ve.classList.toggle('active', v==='exec');
   const vd=document.getElementById('vsDealerAI'); if(vd) vd.classList.toggle('active', v==='dealerai');
+  const vdash=document.getElementById('vsDashboard'); if(vdash) vdash.classList.toggle('active', v==='dashboard');
   applyPerms();
   if(v==='dealers') renderDealers();
   if(v==='products') renderProducts();
@@ -2874,6 +2910,7 @@ function setView(v){
   if(v==='vehicles') renderVehicles();
   if(v==='exec') renderExecDashboard();
   if(v==='dealerai') renderDealerAI();
+  if(v==='dashboard') renderDashboardOverview();
 }
 function clearDealerFilters(){
   ['dqSearch','dfZone','dfCat','dfStatus','dfFlag'].forEach(id=>document.getElementById(id).value='');
@@ -5076,6 +5113,75 @@ function deleteTourSale(id){
   document.getElementById('tourSaleFormWrap').style.display = 'none';
   renderTourPolicy();
   toast('Entry deleted');
+}
+
+/* ================= DASHBOARD OVERVIEW ================= */
+function renderBreakdownList(elId, counts){
+  const el = document.getElementById(elId); if(!el) return;
+  const entries = Object.entries(counts).filter(([,c])=>c>0).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length){ el.innerHTML = '<div class="hint">No data yet.</div>'; return; }
+  const max = entries[0][1];
+  el.innerHTML = entries.map(([label,count])=>`
+    <div class="rank-row">
+      <div class="nm">${esc(label)}</div>
+      <div class="bar"><i style="width:${Math.max(4,count/max*100)}%;background:#2E8B57"></i></div>
+      <b style="min-width:28px;text-align:right">${count}</b>
+    </div>`).join('');
+}
+function renderDashboardOverview(){
+  const kpi = (k,v,cls='') => `<div class="kpi ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+
+  // ---- Team Totals ----
+  const team = visibleEmployees();
+  const desigCounts = {};
+  team.forEach(e=>{ const d = e.designation||'Other'; desigCounts[d] = (desigCounts[d]||0)+1; });
+  document.getElementById('dashTeamKpis').innerHTML =
+    kpi('Total Team', team.length, 'k-ink') +
+    ['RSM','ZSM','SAM','ASM','SFO','FO'].map(d=>kpi(d, desigCounts[d]||0)).join('') +
+    Object.keys(desigCounts).filter(d=>!['RSM','ZSM','SAM','ASM','SFO','FO'].includes(d)).map(d=>kpi(d, desigCounts[d])).join('');
+
+  // ---- Vehicle Totals ----
+  const byModel={}, byName={}, byYear={};
+  vehicles.forEach(v=>{
+    byModel[(v.model||'Unspecified').trim()] = (byModel[(v.model||'Unspecified').trim()]||0)+1;
+    byName[(v.carName||'Unspecified').trim()] = (byName[(v.carName||'Unspecified').trim()]||0)+1;
+    const ym = /(19|20)\d{2}/.exec(v.model||'');
+    const y = ym ? ym[0] : 'Unknown Year';
+    byYear[y] = (byYear[y]||0)+1;
+  });
+  document.getElementById('dashVehKpis').innerHTML =
+    kpi('Total Vehicles', vehicles.length, 'k-ink') +
+    kpi('Active', vehicles.filter(v=>v.status==='Active').length) +
+    kpi('Maintenance', vehicles.filter(v=>v.status==='Maintenance').length, vehicles.some(v=>v.status==='Maintenance')?'k-amber':'') +
+    kpi('Retired', vehicles.filter(v=>v.status==='Retired').length) +
+    kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length);
+  renderBreakdownList('dashVehByModel', byModel);
+  renderBreakdownList('dashVehByName', byName);
+  renderBreakdownList('dashVehByYear', byYear);
+
+  // ---- Dealer Totals ----
+  const dList = dealerVisible();
+  const byStatus={}, byCat={};
+  dList.forEach(d=>{
+    byStatus[d.status||'Active'] = (byStatus[d.status||'Active']||0)+1;
+    byCat[d.cat||'Unrated'] = (byCat[d.cat||'Unrated']||0)+1;
+  });
+  document.getElementById('dashDealerKpis').innerHTML = kpi('Total Dealers', dList.length, 'k-ink');
+  renderBreakdownList('dashDealerByStatus', byStatus);
+  renderBreakdownList('dashDealerByCat', byCat);
+
+  // ---- Payment Promise Totals ----
+  const visDealerIds = new Set(dList.map(d=>d.id));
+  const byPromiseStatus = {'Kept':0,'Pending':0,'Broken':0,'Paid Late':0};
+  const cache = {};
+  promises.filter(p=>visDealerIds.has(p.dealerId)).forEach(p=>{
+    if(!cache[p.dealerId]) cache[p.dealerId] = computeAllPromiseStatuses(p.dealerId);
+    const st = cache[p.dealerId][p.id] && cache[p.dealerId][p.id].status;
+    if(st) byPromiseStatus[st] = (byPromiseStatus[st]||0)+1;
+  });
+  const totalPromises = Object.values(byPromiseStatus).reduce((a,b)=>a+b,0);
+  document.getElementById('dashPromiseKpis').innerHTML = kpi('Total Promises', totalPromises, 'k-ink');
+  renderBreakdownList('dashPromiseByStatus', byPromiseStatus);
 }
 
 function renderTourPolicy(){
