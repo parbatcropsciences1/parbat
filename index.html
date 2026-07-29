@@ -1178,6 +1178,17 @@ body{margin-left:206px}
       <button class="btn btn-g" onclick="openVehicle(null)">＋ Add Vehicle</button>
     </div>
     <div class="card-p" style="margin-bottom:16px">
+      <div class="cc-title">🔧 Car Opening Balance</div>
+      <div class="hint" style="margin-bottom:10px">Select a car and set its starting odometer directly here — no need to open the full vehicle form or log a day's KM just to establish this.</div>
+      <div class="form-grid">
+        <div class="fld full"><label>Select Car</label><select id="obCarSelect" onchange="obCarChanged()"><option value="">— Select a car —</option></select></div>
+        <div class="fld"><label>Current Odometer (auto)</label><input id="obCurrentOdo" disabled></div>
+        <div class="fld"><label>Opening Balance (KM)</label><input type="number" min="0" id="obNewValue"></div>
+      </div>
+      <button class="btn btn-g" style="margin-top:12px" onclick="saveOpeningBalance()">💾 Save Opening Balance</button>
+      <div class="hint" id="obConfirm" style="margin-top:8px"></div>
+    </div>
+    <div class="card-p" style="margin-bottom:16px">
       <div class="cc-title">📊 Vehicle Totals</div>
       <div class="kpis" id="dashVehKpis" style="margin-bottom:14px"></div>
       <div style="font-family:'Sora';font-weight:700;font-size:12.5px;color:var(--g700);margin-bottom:6px">By Car Name</div>
@@ -3697,6 +3708,44 @@ function renderVehicles(){
       </div>
     </article>`;
   }).join('');
+  renderOpeningBalancePanel();
+}
+/** Dedicated Car Opening Balance panel — deliberately separate from the full vehicle
+ * edit form, so setting a starting odometer is one clear action: pick a car, type a
+ * number, save. No other fields in the way. */
+function renderOpeningBalancePanel(){
+  const sel = document.getElementById('obCarSelect'); if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Select a car —</option>' +
+    vehicles.map(v=>`<option value="${v.id}">${esc([v.carName,v.model].filter(Boolean).join(' ')||v.model||'Vehicle')} — ${esc(v.regNo||'')}</option>`).join('');
+  if(vehicles.some(v=>v.id===cur)) sel.value = cur;
+  obCarChanged();
+}
+function obCarChanged(){
+  const vehId = document.getElementById('obCarSelect').value;
+  const v = vehId ? vehById(vehId) : null;
+  const curEl = document.getElementById('obCurrentOdo');
+  const valEl = document.getElementById('obNewValue');
+  document.getElementById('obConfirm').textContent = '';
+  if(!v){ curEl.value = ''; valEl.value = ''; return; }
+  const odo = vehicleOdometer(v.id);
+  curEl.value = odo!==null ? odo.toLocaleString('en-PK')+' km' : 'No reading yet';
+  valEl.value = +v.startingOdometer || 0;
+}
+function saveOpeningBalance(){
+  if(!can('edit')){ toast("You don't have access to edit"); return; }
+  const vehId = document.getElementById('obCarSelect').value;
+  if(!vehId){ toast('Select a car first'); return; }
+  const v = vehById(vehId);
+  if(!v){ toast('Vehicle not found'); return; }
+  const val = +document.getElementById('obNewValue').value || 0;
+  v.startingOdometer = val;
+  vehiclesStore();
+  const title = [v.carName,v.model].filter(Boolean).join(' ') || v.model || 'vehicle';
+  logActivity('🔧', 'Set opening balance for '+title+' to '+val.toLocaleString('en-PK')+' km');
+  document.getElementById('obConfirm').innerHTML = `✅ Saved — <b>${esc(title)}</b>'s opening balance is now ${val.toLocaleString('en-PK')} km.`;
+  toast('Opening balance saved');
+  obCarChanged();
 }
 function vehiclesForEmployee(empId){ return vehicles.filter(v=>v.assignedTo===empId); }
 function empVehicleKmStats(empId){
