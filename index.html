@@ -3758,9 +3758,10 @@ function openVehicle(id){
       <div class="fld"><label>Status</label><select id="vh_status">${VEH_STATUS.map(s=>`<option ${g('status','Active')===s?'selected':''}>${s}</option>`).join('')}</select></div>
       <div class="fld"><label>Region / Zone</label><input id="vh_zone" value="${esc(g('zone'))}" placeholder="KWL"></div>
       <div class="fld"><label>Territory</label><input id="vh_territory" value="${esc(g('territory'))}" placeholder="Khanewal"></div>
+      <div class="fld"><label>Starting Odometer (KM)</label><input type="number" min="0" id="vh_startOdo" value="${+g('startingOdometer')||0}"></div>
       <div class="fld full"><label>Notes</label><textarea id="vh_notes" rows="2">${esc(g('notes'))}</textarea></div>
-      ${v ? `<div class="fld full"><label>Current Odometer (KM)</label><input value="${vehicleOdometer(v.id)!==null ? vehicleOdometer(v.id).toLocaleString('en-PK')+' km' : 'No KM log entries yet'}" disabled></div>
-      <div class="fld full"><label>Recent KM Log Entries</label>${vehicleRecentKmHtml(v.id)}</div>` : ''}
+      ${v ? `<div class="fld full"><label>Current Odometer (KM)</label><input value="${vehicleOdometer(v.id)!==null ? vehicleOdometer(v.id).toLocaleString('en-PK')+' km' : 'No reading yet'}" disabled></div>
+      <div class="fld full"><label>Recent KM Log Entries</label>${vehicleRecentKmHtml(v.id)}</div>` : `<div class="fld full"><div class="hint">Set the Starting Odometer above to establish this vehicle's baseline — you can do this right now, without needing to log a full day's driving first.</div></div>`}
     </div>`;
   document.getElementById('vehicleModal').classList.add('open');
   document.body.style.overflow='hidden';
@@ -3772,7 +3773,8 @@ function saveVehicle(){
   const model = g('model').trim(); if(!model){ toast('Car model is required'); return; }
   const obj = { carName, model, regNo:g('reg'), chassisNo:g('chassis'), engineNo:g('engine'),
     assignedTo:g('emp')||null, assignedDate:g('assignDate')||TODAY(), assignedYear: g('assignDate') ? new Date(g('assignDate')).getFullYear() : new Date(TODAY()).getFullYear(),
-    zone:g('zone'), territory:g('territory'), status:g('status')||'Active', notes:g('notes') };
+    zone:g('zone'), territory:g('territory'), status:g('status')||'Active', notes:g('notes'),
+    startingOdometer: +g('startOdo')||0 };
   if(editingVehicleId) Object.assign(vehById(editingVehicleId), obj);
   else vehicles.push(Object.assign({id:uid('vh_')}, obj));
   vehiclesStore(); logActivity('🚗', (editingVehicleId?'Updated vehicle ':'Added vehicle ')+([carName,model].filter(Boolean).join(' ')));
@@ -3815,8 +3817,9 @@ function monthlyKmFor(vehId, dateStr){
 function vehicleOdometer(vehId){
   const logs = kmLogs.filter(k=>k.vehicleId===vehId && k.endKm!==undefined && k.endKm!==null && k.endKm!=='')
     .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  if(!logs.length) return null;
-  return +logs[logs.length-1].endKm || 0;
+  if(logs.length) return +logs[logs.length-1].endKm || 0;
+  const v = vehById(vehId);
+  return (v && v.startingOdometer) ? +v.startingOdometer : null;
 }
 function vehicleRecentKmHtml(vehId){
   const logs = kmLogs.filter(k=>k.vehicleId===vehId).sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,5);
@@ -3911,7 +3914,9 @@ function kmVehicleDetailHtml(v){
 function vehicleOdometerBefore(vehId, beforeDate, excludeLogId){
   const logs = kmLogs.filter(k=>k.vehicleId===vehId && k.id!==excludeLogId && (k.date||'') < beforeDate && k.endKm!=null)
     .sort((a,b)=>(a.date||'').localeCompare(b.date||''));
-  return logs.length ? (+logs[logs.length-1].endKm || 0) : null;
+  if(logs.length) return +logs[logs.length-1].endKm || 0;
+  const v = vehById(vehId);
+  return (v && v.startingOdometer) ? +v.startingOdometer : null;
 }
 function openKmLog(id){
   if(!can('edit')){ toast("You don't have access to edit"); return; }
