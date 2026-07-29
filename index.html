@@ -1190,7 +1190,7 @@ body{margin-left:206px}
       <select id="vhFilterName" onchange="renderVehicles()"><option value="">All Car Names</option></select>
       <select id="vhFilterModel" onchange="renderVehicles()"><option value="">All Car Models</option></select>
       <select id="vhFilterRegion" onchange="renderVehicles()"><option value="">All Regions</option></select>
-      <select id="vhFilterStatus" onchange="renderVehicles()"><option value="">All Status</option><option>Active</option><option>Maintenance</option><option>Retired</option></select>
+      <select id="vhFilterStatus" onchange="renderVehicles()"><option value="">All Status</option><option>Active</option><option>Maintenance</option><option>Retired</option><option>Office</option></select>
       <button class="chip-clear" onclick="clearVehicleFilters()">✕ Clear</button>
       <span class="count-lab" id="vhCount"></span>
     </div>
@@ -1203,10 +1203,21 @@ body{margin-left:206px}
         <b style="font-family:'Sora';font-size:13px">Daily Vehicle KM / Meter Reading Log</b>
         <div class="hint" style="margin:2px 0 0">Date, zone, area, visit place and personal-use tracking per vehicle. Monthly KM auto-totals.</div>
       </div>
+      <label class="btn btn-o" style="cursor:pointer">📤 Upload KM Log
+        <input type="file" accept=".xlsx,.xls,.csv" class="hidden" onchange="importKmLogs(this)" style="display:none">
+      </label>
+      <button class="btn btn-o" onclick="downloadKmLogTemplate()">📄 Template</button>
       <button class="btn btn-g" onclick="openKmLog(null)">＋ Add Entry</button>
     </div>
+    <div id="kmImportSummary"></div>
     <div class="kpis" id="kmStats" style="margin-bottom:12px"></div>
     <div class="dl-wrap"><table class="dl-table" id="kmTable"></table></div>
+    <div class="card-p" style="margin-top:16px">
+      <div class="cc-title">📍 Place Visit Frequency</div>
+      <div class="hint" style="margin-bottom:10px">Parsed from Visit Place entries separated by "+" — each distinct place gets counted per employee, once per KM log entry it appears in.</div>
+      <input id="kmVisitSearch" placeholder="🔍 Search employee or place…" oninput="renderKmVisitFrequency()" style="width:100%;max-width:320px;padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-family:inherit;margin-bottom:10px">
+      <div id="kmVisitFreqTable"></div>
+    </div>
   </div>
 </section>
 
@@ -3582,7 +3593,7 @@ function deleteProduct(){
 /* ---------- vehicles: full CRUD ---------- */
 let vehicles = [];
 let editingVehicleId = null;
-const VEH_STATUS = ['Active','Maintenance','Retired'];
+const VEH_STATUS = ['Active','Maintenance','Retired','Office'];
 function vehiclesStore(){ try{ localStorage.setItem('parbat_vehicles_v1', JSON.stringify(vehicles)); }catch(e){} }
 function vehiclesLoad(){
   let ls=null; try{ ls=JSON.parse(localStorage.getItem('parbat_vehicles_v1')||'null'); }catch(e){}
@@ -3612,6 +3623,7 @@ function renderVehicles(){
     kpi('Active', vehicles.filter(v=>v.status==='Active').length) +
     kpi('Maintenance', vehicles.filter(v=>v.status==='Maintenance').length, vehicles.some(v=>v.status==='Maintenance')?'k-amber':'') +
     kpi('Retired', vehicles.filter(v=>v.status==='Retired').length) +
+    kpi('Office', vehicles.filter(v=>v.status==='Office').length) +
     kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length);
   const cardsFor = (counts, sortMode) => {
     let entries = Object.entries(counts).filter(([,c])=>c>0);
@@ -3792,8 +3804,13 @@ function setVehTab(t){
 }
 function monthlyKmFor(vehId, dateStr){
   const ym = (dateStr||TODAY()).slice(0,7);
-  return kmLogs.filter(k=>k.vehicleId===vehId && (k.date||'').slice(0,7)===ym)
-    .reduce((a,k)=>a+(+k.dailyKm||0), 0);
+  const monthLogs = kmLogs.filter(k=>k.vehicleId===vehId && (k.date||'').slice(0,7)===ym);
+  // Bulk-imported entries can carry an authoritative "Monthly KM" figure straight from the
+  // field report — prefer that (most recent one) over re-summing daily entries, since the
+  // source report may already account for history this dashboard never directly logged.
+  const reported = monthLogs.filter(k=>k.monthlyKmReported!=null).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  if(reported.length) return +reported[0].monthlyKmReported || 0;
+  return monthLogs.reduce((a,k)=>a+(+k.dailyKm||0), 0);
 }
 function vehicleOdometer(vehId){
   const logs = kmLogs.filter(k=>k.vehicleId===vehId && k.endKm!==undefined && k.endKm!==null && k.endKm!=='')
@@ -3844,6 +3861,41 @@ function renderKmLog(){
   document.getElementById('kmTable').innerHTML = `
     <thead><tr><th>Date</th><th>Zone</th><th>Area</th><th>Desig.</th><th>Name</th><th>Opening → Reading</th><th>KM Used</th><th>Monthly KM</th><th>Visit Place</th><th>Usage Type</th><th>Remarks</th><th>Vehicle Number</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="12" style="padding:22px;text-align:center;color:var(--mut)">No KM entries yet. <b style="color:var(--g600);cursor:pointer" onclick="openKmLog(null)">Add one →</b></td></tr>`}</tbody>`;
+  renderKmVisitFrequency();
+}
+/** Visit Place entries are "+"-separated (e.g. "KWL+ABK+Chak 14/8-R") — this splits every KM
+ * log entry's visit list and counts how many separate entries each person/place pair
+ * appears in, so e.g. "Ali Raza — ABK — 3 visits" reflects 3 distinct logged days that
+ * mentioned ABK, not just a raw string match. */
+function computeVisitFrequency(){
+  const freq = {};
+  kmLogs.forEach(k=>{
+    if(!k.visitPlace) return;
+    const places = [...new Set(k.visitPlace.split('+').map(p=>p.trim()).filter(Boolean))]; // dedupe within one entry
+    const empKey = k.empId || k.empName || '—';
+    places.forEach(place=>{
+      const key = empKey+'|'+place.toLowerCase();
+      if(!freq[key]) freq[key] = { empName:k.empName||'—', designation:k.designation||'', place, count:0 };
+      freq[key].count++;
+    });
+  });
+  return Object.values(freq);
+}
+function renderKmVisitFrequency(){
+  const el = document.getElementById('kmVisitFreqTable'); if(!el) return;
+  const q = (document.getElementById('kmVisitSearch')?.value||'').trim().toLowerCase();
+  let rows = computeVisitFrequency();
+  if(q) rows = rows.filter(r => r.empName.toLowerCase().includes(q) || r.place.toLowerCase().includes(q));
+  rows.sort((a,b)=> a.empName.localeCompare(b.empName) || b.count-a.count);
+  if(!rows.length){ el.innerHTML = '<div class="hint">No visit places logged yet.</div>'; return; }
+  el.innerHTML = `<div class="dl-wrap"><table class="dl-table" style="width:100%">
+    <thead><tr><th>Name</th><th>Desig.</th><th>Place</th><th>Visits</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td><b>${esc(r.empName)}</b></td>
+      <td>${esc(r.designation)}</td>
+      <td>${esc(r.place)}</td>
+      <td class="mono"><b>${r.count}</b></td>
+    </tr>`).join('')}</tbody></table></div>`;
 }
 function kmVehicleDetailHtml(v){
   if(!v) return '<div class="hint">Select an employee to auto-fill their assigned vehicle.</div>';
@@ -4002,6 +4054,135 @@ function deleteKmLog(){
   if(!confirm('Delete this KM entry?')) return;
   kmLogs = kmLogs.filter(x=>x.id!==editingKmId);
   kmLogsStore(); closeModal('kmModal'); renderKmLog(); toast('KM entry deleted');
+}
+
+/* ---------- Bulk upload: daily team KM report (matches the field "Meter Reading" report format) ---------- */
+function downloadKmLogTemplate(){
+  const rows = [
+    ['Date','Zone','Area','Desig.','Name','Daily KM','Monthly KM','Visit Place','Personal','Vehicle Number'],
+    ['27-Jul-26','KWL','ABK','ASM','Ali Raza',96,3311,'Sarai Sidhu+Kot Islam+Mauza Khan Doltana+ABK','','ANN-129(Cultus)'],
+    ['27-Jul-26','KWL','KWL-RGN','RSM','Hassan Raza',167,3037,'KWL+Chak 14/V+MNC+Iqbal Nagar','','ARE-609(Yaris)']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = rows[0].map(h=>({wch: Math.max(12, h.length+4)}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'KM Log');
+  XLSX.writeFile(wb, 'Parbat_KM_Log_Template.xlsx');
+}
+/** "ANN-129(Cultus)" or "AAC-109 (Cultus)" -> "ANN-129" / "AAC-109" — strips the model
+ * name in parentheses that these field reports bundle in with the registration number. */
+function extractRegNo(raw){
+  return String(raw||'').split('(')[0].trim();
+}
+function regNoMatches(a, b){
+  const clean = s => String(s||'').toUpperCase().replace(/[\s-]/g,'');
+  return clean(a) === clean(b) && clean(a).length>0;
+}
+/** Accepts Excel serials, JS Date objects (from cellDates:true), and text dates like
+ * "27-Jul-26" — normalizes everything to YYYY-MM-DD. */
+function parseKmDate(raw){
+  if(raw instanceof Date && !isNaN(raw)) return ymd(raw);
+  const s = String(raw||'').trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = /^(\d{1,2})[-\/ ]([A-Za-z]{3,9}|\d{1,2})[-\/ ](\d{2,4})$/.exec(s);
+  if(m){
+    const day = +m[1];
+    const monthNames = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    let month = isNaN(+m[2]) ? monthNames.indexOf(m[2].slice(0,3).toLowerCase())+1 : +m[2];
+    let year = +m[3]; if(year<100) year += 2000;
+    if(month>=1 && month<=12){ const d=new Date(year, month-1, day); if(!isNaN(d)) return ymd(d); }
+  }
+  return null;
+}
+function importKmLogs(inp){
+  if(!can('import')){ toast("You don't have access to import"); inp.value=''; return; }
+  const f = inp.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      const wb = XLSX.read(ev.target.result, {type:'array', cellDates:true});
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:''});
+      if(rows.length < 2){ toast('File is empty'); inp.value=''; return; }
+      const H = rows[0].map(h=>norm(h));
+      const col = names => H.findIndex(h => names.some(n => h===n || h.includes(n)));
+      const ci = {
+        date: col(['date']),
+        zone: col(['zone']),
+        area: col(['area','territory']),
+        desig: col(['desig','designation']),
+        name: col(['name','employee']),
+        daily: col(['daily km','dailykm','daily']),
+        monthly: col(['monthly km','monthlykm','monthly']),
+        visit: col(['visit place','visit']),
+        personal: col(['personal']),
+        vehNo: col(['vehicel number','vehicle number','vehicle no','vehicle','veh number','car number'])
+      };
+      if(ci.date<0 || ci.daily<0 || ci.vehNo<0){
+        toast('File is missing required columns (Date, Daily KM, Vehicle Number)'); inp.value=''; return;
+      }
+
+      let imported=0, updated=0, skippedNoVeh=0, skippedNoEmp=0, skippedNoDate=0;
+      const unmatchedVeh = new Set(), unmatchedEmp = new Set();
+
+      for(let r=1; r<rows.length; r++){
+        const row = rows[r];
+        if(!row || row.every(c=>c==='' || c==null)) continue;
+        const date = parseKmDate(row[ci.date]);
+        if(!date){ skippedNoDate++; continue; }
+
+        const regNo = extractRegNo(row[ci.vehNo]);
+        const v = vehicles.find(x=>regNoMatches(x.regNo, regNo));
+        if(!v){ skippedNoVeh++; if(regNo) unmatchedVeh.add(regNo); continue; }
+
+        const nameRaw = ci.name>=0 ? String(row[ci.name]||'').trim() : '';
+        let e = null;
+        if(nameRaw){
+          const zoneRaw = ci.zone>=0 ? String(row[ci.zone]||'').trim() : '';
+          const candidates = employees.filter(x=>x.name && x.name.trim().toLowerCase()===nameRaw.toLowerCase());
+          e = candidates.length>1 && zoneRaw ? (candidates.find(x=>x.zone===zoneRaw)||candidates[0]) : candidates[0];
+        }
+        if(!e && v.assignedTo) e = employees.find(x=>x.id===v.assignedTo); // fall back to the vehicle's own assignment
+        if(!e){ skippedNoEmp++; if(nameRaw) unmatchedEmp.add(nameRaw); continue; }
+
+        const dailyKm = +row[ci.daily] || 0;
+        const monthlyKm = ci.monthly>=0 ? (+row[ci.monthly] || null) : null;
+        const personalRaw = ci.personal>=0 ? String(row[ci.personal]||'').trim().toLowerCase() : '';
+        const usageType = /^(y|yes|personal|true|1)$/.test(personalRaw) ? 'Personal Use' : 'Official Use';
+
+        const obj = {
+          date, zone: ci.zone>=0 ? String(row[ci.zone]||'').trim() : (e.zone||''),
+          area: ci.area>=0 ? String(row[ci.area]||'').trim() : (e.territory||''),
+          designation: ci.desig>=0 ? String(row[ci.desig]||'').trim() : (e.designation||''),
+          empId: e.id, empName: e.name, vehicleId: v.id, vehicleNo: v.regNo||'',
+          dailyKm, monthlyKmReported: monthlyKm,
+          visitPlace: ci.visit>=0 ? String(row[ci.visit]||'').trim() : '',
+          usageType, remarks: usageType==='Personal Use' ? 'Imported from daily KM report' : '',
+          personal: usageType==='Personal Use'
+        };
+
+        // one entry per vehicle+date — re-uploading the same day's report updates rather than duplicates
+        const existing = kmLogs.find(k=>k.vehicleId===v.id && k.date===date);
+        if(existing){ Object.assign(existing, obj); updated++; }
+        else { kmLogs.push(Object.assign({id:uid('km_')}, obj)); imported++; }
+      }
+
+      kmLogsStore();
+      logActivity('📤', `Imported KM log: ${imported} added, ${updated} updated`);
+      const summaryEl = document.getElementById('kmImportSummary');
+      const skippedTotal = skippedNoVeh+skippedNoEmp+skippedNoDate;
+      summaryEl.innerHTML = `<div class="hint" style="margin-bottom:10px;padding:10px;border-radius:9px;background:${skippedTotal?'#FCEEEA':'#EAF3EC'};border:1px solid ${skippedTotal?'#C24A2E':'#1B5E3B'}">
+        ✅ ${imported} new, ${updated} updated.
+        ${skippedTotal ? `⚠ ${skippedTotal} row(s) skipped — ${skippedNoVeh?'no matching vehicle ('+[...unmatchedVeh].slice(0,5).map(esc).join(', ')+(unmatchedVeh.size>5?'…':'')+')':''}${skippedNoVeh&&skippedNoEmp?'; ':''}${skippedNoEmp?'no matching employee ('+[...unmatchedEmp].slice(0,5).map(esc).join(', ')+(unmatchedEmp.size>5?'…':'')+')':''}${skippedNoDate?(skippedNoVeh||skippedNoEmp?'; ':'')+skippedNoDate+' unreadable date(s)':''}` : ''}
+      </div>`;
+      renderKmLog();
+      toast(`KM log import complete: ${imported} added, ${updated} updated`);
+    }catch(err){
+      console.warn('KM log import failed', err);
+      toast('Could not read that file — check it matches the template format');
+    }
+    inp.value='';
+  };
+  reader.readAsArrayBuffer(f);
 }
 
 /* ---------- Special Product Sales: target/achieved/remaining per product per employee/month ---------- */
