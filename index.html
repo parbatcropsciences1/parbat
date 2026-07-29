@@ -3629,15 +3629,13 @@ function renderVehicles(){
     byYear[y] = (byYear[y]||0)+1;
   });
   const dashVehKpisEl = document.getElementById('dashVehKpis');
-  const totalOdometer = vehicles.reduce((a,v)=>a+(vehicleOdometer(v.id)||0), 0);
   if(dashVehKpisEl) dashVehKpisEl.innerHTML =
     kpi('Total Vehicles', vehicles.length, 'k-ink') +
     kpi('Active', vehicles.filter(v=>v.status==='Active').length) +
     kpi('Maintenance', vehicles.filter(v=>v.status==='Maintenance').length, vehicles.some(v=>v.status==='Maintenance')?'k-amber':'') +
     kpi('Retired', vehicles.filter(v=>v.status==='Retired').length) +
     kpi('Office', vehicles.filter(v=>v.status==='Office').length) +
-    kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length) +
-    kpi('Total Odometer Readings', totalOdometer.toLocaleString('en-PK')+' km', 'k-ink');
+    kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length);
   const cardsFor = (counts, sortMode) => {
     let entries = Object.entries(counts).filter(([,c])=>c>0);
     if(sortMode==='chrono'){
@@ -3887,12 +3885,14 @@ function renderKmLog(){
   const thisMonth = kmLogs.filter(k=>(k.date||'').slice(0,7)===ym);
   const officialKm = thisMonth.filter(k=>k.usageType!=='Personal Use').reduce((a,k)=>a+(+k.dailyKm||0),0);
   const personalKm = thisMonth.filter(k=>k.usageType==='Personal Use').reduce((a,k)=>a+(+k.dailyKm||0),0);
+  const totalOdometer = vehicles.reduce((a,v)=>a+(vehicleOdometer(v.id)||0), 0);
   const statsEl = document.getElementById('kmStats');
   if(statsEl){
     const kpi = (k,v,cls='') => `<div class="kpi ${cls}"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     statsEl.innerHTML = kpi('Official KM (this month)', officialKm.toLocaleString('en-PK')+' km')
       + kpi('Personal KM (this month)', personalKm.toLocaleString('en-PK')+' km', personalKm>0?'k-amber':'')
-      + kpi('Total Entries (this month)', thisMonth.length);
+      + kpi('Total Entries (this month)', thisMonth.length)
+      + kpi('Total Odometer Readings (all cars)', totalOdometer.toLocaleString('en-PK')+' km', 'k-ink');
   }
   const rows = [...kmLogs].sort((a,b)=> (b.date||'').localeCompare(a.date||'')).map(k=>{
     const monKm = monthlyKmFor(k.vehicleId, k.date);
