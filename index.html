@@ -3629,13 +3629,15 @@ function renderVehicles(){
     byYear[y] = (byYear[y]||0)+1;
   });
   const dashVehKpisEl = document.getElementById('dashVehKpis');
+  const totalOdometer = vehicles.reduce((a,v)=>a+(vehicleOdometer(v.id)||0), 0);
   if(dashVehKpisEl) dashVehKpisEl.innerHTML =
     kpi('Total Vehicles', vehicles.length, 'k-ink') +
     kpi('Active', vehicles.filter(v=>v.status==='Active').length) +
     kpi('Maintenance', vehicles.filter(v=>v.status==='Maintenance').length, vehicles.some(v=>v.status==='Maintenance')?'k-amber':'') +
     kpi('Retired', vehicles.filter(v=>v.status==='Retired').length) +
     kpi('Office', vehicles.filter(v=>v.status==='Office').length) +
-    kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length);
+    kpi('Unassigned', vehicles.filter(v=>!v.assignedTo).length) +
+    kpi('Total Odometer Readings', totalOdometer.toLocaleString('en-PK')+' km', 'k-ink');
   const cardsFor = (counts, sortMode) => {
     let entries = Object.entries(counts).filter(([,c])=>c>0);
     if(sortMode==='chrono'){
